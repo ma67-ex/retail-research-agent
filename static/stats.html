@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#e9edf1">
+<title>Usage</title>
+<link rel="stylesheet" href="/assets/theme.css">
+<script src="/assets/theme.js"></script>
+<style>
+  body { min-height: 100vh; min-height: 100dvh; }
+  main {
+    position: relative; z-index: var(--z-app); max-width: 960px; margin: 0 auto;
+    padding: calc(14px + var(--safe-t)) calc(20px + var(--safe-r)) calc(56px + var(--safe-b)) calc(20px + var(--safe-l));
+  }
+  .bar { display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 10px 0 12px; border-radius: 20px; margin-bottom: 44px; }
+  .titles { min-width: 0; }
+  .title { font: 600 15px/1.2 var(--font-display); letter-spacing: -.012em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .subtitle { margin-top: 2px; font-size: 12px; color: var(--ink-3); }
+  .bar .pill { margin-left: auto; flex: none; }
+
+  h1 { margin: 0; max-width: 24ch; font: 600 2.375rem/1.1 var(--font-display); letter-spacing: -.028em; text-wrap: balance; }
+  .summary { margin: 16px 0 0; max-width: 60ch; font-size: 1.12rem; line-height: 1.55; color: var(--ink-2); text-wrap: pretty; }
+  .summary b { color: var(--ink); font-weight: 620; font-variant-numeric: tabular-nums; }
+  .summary .saved { color: var(--accent-ink); }
+  .assume { margin: 10px 0 0; max-width: 60ch; font-size: 13px; color: var(--ink-3); }
+  #status { margin: 18px 0 0; max-width: 60ch; font-size: 14px; color: var(--err); }
+  #status:empty { display: none; }
+
+  h2 { margin: 52px 0 6px; font: 600 1.06rem/1.3 var(--font-display); letter-spacing: -.012em; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); column-gap: 32px; }
+  .metric { padding: 16px 0 14px; border-top: 1px solid var(--glass-line); min-width: 0; }
+  .metric .l { font-size: 13px; color: var(--ink-3); }
+  .metric .v { margin-top: 4px; font: 620 1.6rem/1.15 var(--font-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .metric.flag .v { color: var(--warn); }
+  .metric.bad .v { color: var(--err); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; font-variant-numeric: tabular-nums; }
+  th { padding: 10px 0 8px; text-align: left; font-size: 12.5px; font-weight: 500; color: var(--ink-3); }
+  td { padding: 12px 0; border-top: 1px solid var(--glass-line); }
+  td:first-child { font-weight: 600; }
+  th.n, td.n { text-align: right; }
+  td.bad { color: var(--err); font-weight: 600; }
+  .empty { padding: 14px 0; color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--glass-line); }
+  .foot { margin: 40px 0 0; font-size: 12.5px; color: var(--ink-3); max-width: 80ch; }
+
+  @media (max-width: 760px) {
+    main { padding-left: calc(10px + var(--safe-l)); padding-right: calc(10px + var(--safe-r)); padding-top: calc(8px + var(--safe-t)); }
+    .bar { margin-bottom: 30px; height: 58px; }
+    .content { padding: 0 6px; }
+    h1 { font-size: 1.9rem; }
+    .summary { font-size: 1.04rem; }
+    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
+    .metric .v { font-size: 1.35rem; }
+    h2 { margin-top: 40px; }
+  }
+</style>
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"></div>
+<main>
+  <header class="bar glass heavy">
+    <div class="mark" id="mark" aria-hidden="true">R</div>
+    <div class="titles">
+      <div class="title" id="title">Retail Research</div>
+      <div class="subtitle">Usage</div>
+    </div>
+    <a class="pill" href="/">Open assistant</a>
+  </header>
+
+  <div class="content">
+    <h1>How the assistant is doing</h1>
+    <p class="summary" id="summary">Loading the latest numbers.</p>
+    <p class="assume" id="assumption"></p>
+    <div id="status" role="status"></div>
+
+    <h2>Quality and speed</h2>
+    <div class="metrics" id="metrics"></div>
+
+    <h2>Data lookups</h2>
+    <div id="tools"></div>
+
+    <p class="foot" id="since">Counts only. No questions, answers, tickers or customer details are stored, and the numbers reset when the server restarts.</p>
+  </div>
+</main>
+<script>
+  const REFRESH_MS = 10000;
+  const TOKEN = new URLSearchParams(location.hash.slice(1)).get('token') || '';
+  const MESSAGES = {
+    401: 'The stats token is missing or wrong. Open this page as /stats/dashboard#token=YOUR_TOKEN.',
+    403: 'Stats are limited to direct local access. Ask the operator to set STATS_TOKEN, then open this page as /stats/dashboard#token=YOUR_TOKEN.',
+  };
+  const TOOL_NAMES = {
+    get_quote: 'Quote', get_price_history: 'Price history', get_fundamentals: 'Fundamentals',
+    get_latest_filing: 'Filing', calculator: 'Calculator', other: 'Other',
+  };
+
+  const $ = (id) => document.getElementById(id);
+  let timer = null;
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  const num = (v) => (isNum(v) ? v.toLocaleString() : 'n/a');
+  const pct = (v) => (isNum(v) ? Math.round(v * 1000) / 10 + '%' : 'n/a');
+  const secs = (v) => (isNum(v) ? (v / 1000).toFixed(1) + ' s' : 'n/a');
+  const mins = (v) => (!isNum(v) ? 'n/a' : v >= 120 ? (v / 60).toFixed(1) + ' hours' : Math.round(v).toLocaleString() + ' minutes');
+
+  function summary(s) {
+    const r = s.rates || {};
+    const p = $('summary');
+    p.replaceChildren();
+    if (!isNum(s.questions) || s.questions === 0) {
+      p.textContent = 'No questions yet. The numbers appear here as soon as people start asking.';
+      return;
+    }
+    const b = (t, cls) => el('b', cls || '', t);
+    const txt = (t) => document.createTextNode(t);
+    p.append(
+      txt('The assistant answered '), b(num(s.answered)), txt(' of '), b(num(s.questions)), txt(s.questions === 1 ? ' question. ' : ' questions. '),
+      b(pct(r.live_data)), txt(' used live data and '), b(pct(r.fully_verified)), txt(' had every figure verified. '),
+      txt('It turned away '), b(num(s.advice_deflected)), txt(s.advice_deflected === 1 ? ' request' : ' requests'), txt(' for investment advice and saved an estimated '),
+      b(mins(s.estimated_minutes_saved), 'saved'), txt(' of support time.'),
+    );
+  }
+
+  function metric(label, value, cls) {
+    const m = el('div', 'metric' + (cls ? ' ' + cls : ''));
+    m.append(el('div', 'l', label), el('div', 'v', value));
+    return m;
+  }
+
+  function toolsTable(tools) {
+    const names = tools && typeof tools === 'object' ? Object.keys(tools) : [];
+    if (!names.length) return el('div', 'empty', 'No data lookups yet.');
+    const table = el('table');
+    const head = el('tr');
+    head.append(el('th', '', 'Lookup'), el('th', 'n', 'Calls'), el('th', 'n', 'Errors'));
+    const thead = el('thead');
+    thead.append(head);
+    const body = el('tbody');
+    for (const name of names) {
+      const t = tools[name] || {};
+      const row = el('tr');
+      row.append(el('td', '', TOOL_NAMES[name] || name), el('td', 'n', num(t.calls)),
+        el('td', 'n' + (t.errors > 0 ? ' bad' : ''), num(t.errors)));
+      body.append(row);
+    }
+    table.append(thead, body);
+    return table;
+  }
+
+  function show(s) {
+    const lat = s.latency_ms || {};
+    summary(s);
+    $('assumption').textContent = s.assumption ? 'Time saved is an estimate, not a measurement. It assumes ' + s.assumption + '.' : '';
+    const rejected = (s.rejected_invalid || 0) + (s.rate_limited || 0);
+    $('metrics').replaceChildren(
+      metric('Typical answer', secs(lat.p50)),
+      metric('Slow answers (95th percentile)', secs(lat.p95)),
+      metric('Slowest answer', secs(lat.max)),
+      metric('Flagged figures', num(s.flagged_numbers), s.flagged_numbers > 0 ? 'flag' : ''),
+      metric('Answered from cache', num(s.served_from_cache)),
+      metric('Clarifying questions', num(s.clarifying_questions)),
+      metric('Model errors', num(s.model_errors), s.model_errors > 0 ? 'bad' : ''),
+      metric('Rejected or rate limited', num(rejected)),
+    );
+    $('tools').replaceChildren(toolsTable(s.tools));
+    const since = s.since ? new Date(s.since) : null;
+    $('since').textContent = 'Counts only. No questions, answers, tickers or customer details are stored. Counting since ' +
+      (since && !isNaN(since) ? since.toLocaleString() : 'server start') + ', updated ' + new Date().toLocaleTimeString() +
+      ', refreshing every ' + REFRESH_MS / 1000 + ' seconds. Answer times cover the last ' + num(lat.samples) + ' answered questions.';
+  }
+
+  async function load() {
+    try {
+      const res = await fetch('/stats', { headers: TOKEN ? { 'X-Stats-Token': TOKEN } : {}, cache: 'no-store' });
+      if (res.status === 401 || res.status === 403) {
+        clearInterval(timer);
+        $('status').textContent = MESSAGES[res.status];
+        $('summary').textContent = 'Usage numbers are locked.';
+        return;
+      }
+      const data = await res.json();
+      if (!res.ok || !data || typeof data !== 'object') throw new Error('bad response');
+      $('status').textContent = '';
+      show(data);
+    } catch (_) {
+      $('status').textContent = "Couldn't load the numbers. Trying again in " + REFRESH_MS / 1000 + ' seconds.';
+    }
+  }
+
+  function luminance(hex) {
+    const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+  fetch('/config').then((r) => (r.ok ? r.json() : null)).then((c) => {
+    if (!c) return;
+    if (typeof c.firm_name === 'string' && c.firm_name.trim()) {
+      const firm = c.firm_name.trim();
+      $('title').textContent = firm + ' Research';
+      $('mark').textContent = (firm.match(/[A-Za-z0-9]/) || ['R'])[0].toUpperCase();
+      document.title = firm + ' usage';
+    }
+    if (typeof c.brand_color === 'string' && /^#[0-9a-fA-F]{6}$/.test(c.brand_color)) {
+      const L = luminance(c.brand_color);
+      document.documentElement.style.setProperty('--accent', c.brand_color);
+      document.documentElement.style.setProperty('--on-accent', (L + 0.05) / 0.056 >= 1.05 / (L + 0.05) ? '#04170f' : '#ffffff');
+    }
+  }).catch(() => {});
+
+  load();
+  timer = setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>

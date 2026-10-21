@@ -1,0 +1,28 @@
+{
+  "note": "Values that cannot change. Everything live (prices, P/E, SMA, market cap, latest filings, latest annual financials) is recomputed independently inside evals.py from raw yfinance data or SEC EDGAR, never through tools.py.",
+  "ciks": {
+    "BRK-B": 1067983,
+    "MSFT": 789019,
+    "TSLA": 1318605,
+    "AAPL": 320193
+  },
+  "percent_math": {
+    "question": "15% of 2,900,000,000,000",
+    "result": 435000000000,
+    "note": "0.15 * 2.9e12 = 4.35e11 = 435 billion; 435 trillion would be a 1000x error"
+  },
+  "aapl_close_2020_01_02": {
+    "value": 75.0875,
+    "currency": "USD",
+    "split_adjusted": true,
+    "dividend_adjusted": false,
+    "note": "Split-adjusted for AAPL's 4-for-1 split of 2020-08-31 (the unadjusted close that day was 300.35 = 4 x 75.0875). Not dividend-adjusted; the dividend-adjusted 'Adj Close' of 72.27 is the wrong number for this question.",
+    "source": "yf.download('AAPL', start='2019-12-30', end='2020-01-06', auto_adjust=False), Close column, fetched 2026-10-21"
+  },
+  "tsla_10k_fy2025": {
+    "filed": "2026-01-29",
+    "period_of_report": "2025-12-31",
+    "url": "https://www.sec.gov/Archives/edgar/data/1318605/000162828026003952/tsla-20251231.htm",
+    "source": "https://data.sec.gov/submissions/CIK0001318605.json, fetched 2026-10-21"
+  }
+}
