@@ -7,7 +7,7 @@ An investing research assistant that brokers and fintech apps can put under thei
 ![Ollama](https://img.shields.io/badge/model-qwen3%3A8b%20via%20Ollama-000000)
 ![No paid APIs](https://img.shields.io/badge/paid%20APIs-none-2ea44f)
 
-[Quick start](#quick-start) | [Features](#features) | [How it works](#how-it-works) | [White-label setup](#white-label-setup-for-brokers) | [Tests and evals](#tests-and-evals) | [Competition entry](#competition-dubai-ai-agents-championship)
+[Quick start](#quick-start) | [Features](#features) | [How it works](#how-it-works) | [White-label setup](#white-label-setup-for-brokers) | [Tests and evals](#tests-and-evals) | 
 
 <img src="docs/screenshots/space-desktop.jpg" alt="The assistant answering a question about Tesla's past year, with a price chart and the tool call listed in the Sources panel" width="100%">
 
@@ -164,10 +164,6 @@ docs/           screenshots used in this README
 - Price data is delayed and comes from an unlicensed source (see above).
 - The rate limiter is in memory and single-process.
 - There are no user accounts or authentication. Run it on localhost or behind a proxy with access control.
-
-## Competition: Dubai AI Agents Championship
-
-Rules: dubaichamberdigital.com/en/create-ai-agents. The submission (prototype, pitch deck, demo video) is due January 2027, and the Grand Final in May 2027 needs a fully working agent demonstrated live. The entry is in the Best Business AI Agent category.
 
 The pitch:
 
