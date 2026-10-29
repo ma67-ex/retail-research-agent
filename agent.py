@@ -574,6 +574,19 @@ def _loop(task: str, history: list, max_turns: int, calls: list, advice: bool) -
         return content, bad, bad_quotes
 
 
+_CACHE_WORDS = re.compile(r"cache|stale|out of date|outdated|saved data|not current|not live", re.I)
+
+
+def _cache_note(answer: str, calls: list) -> str:
+    """The UI marks cached sources, but the model's own sentence does not always say so. Say it in code."""
+    stale = [c["result"] for c in calls if isinstance(c.get("result"), dict) and c["result"].get("stale")]
+    if not stale or not answer or _CACHE_WORDS.search(answer):
+        return answer
+    dates = sorted({str(r["as_of"]) for r in stale if r.get("as_of")})
+    when = f" (as of {', '.join(dates)})" if dates else ""
+    return f"{answer}\n\nNote: part of this answer comes from saved data{when}, not a live lookup, so it may be out of date."
+
+
 def run(task: str, history: list | None = None, max_turns: int = MAX_TURNS) -> dict:
     started = time.perf_counter()
     calls, advice = [], False
@@ -597,7 +610,7 @@ def run(task: str, history: list | None = None, max_turns: int = MAX_TURNS) -> d
         if advice:
             body = answer[len(REFUSAL):].strip() if answer.startswith(REFUSAL) else answer
             answer = f"{REFUSAL}\n\n{body or NO_DATA_LINE}"
-        return out(answer, bad, bad_quotes=bad_quotes)
+        return out(_cache_note(answer, calls), bad, bad_quotes=bad_quotes)
     except ModelError as e:
         return out(error=str(e))
     except Exception:

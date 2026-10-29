@@ -1038,20 +1038,32 @@
     if (data && typeof data.error === 'string' && data.error.trim()) return truncate(data.error.trim(), 500);
     if (status === 429) return 'Too many requests right now. Wait a few seconds and try again.';
     if (status === 503) return 'The local model is not running. Start it and try again.';
+    if (status === 401) return 'That access token was not accepted.';
     if (status === 422) return "That question couldn't be processed. Try rephrasing it.";
     return 'The server hit an unexpected problem. Please try again.';
+  }
+
+  function tokenHeader() {
+    let t = '';
+    try { t = sessionStorage.getItem('access-token') || ''; } catch (_) {}
+    return t ? { 'x-access-token': t } : {};
   }
 
   async function request(task) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     try {
-      const res = await fetch('/chat', {
+      const post = () => fetch('/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...tokenHeader() },
         body: JSON.stringify({ task, history: history.slice(-HISTORY_MAX) }),
         signal: ctrl.signal,
       });
+      let res = await post();
+      if (res.status === 401) {  // the server wants an access token: ask once, keep it for this tab only
+        const t = window.prompt('This assistant needs an access token:');
+        if (t) { try { sessionStorage.setItem('access-token', t.trim()); } catch (_) {} res = await post(); }
+      }
       const raw = await res.text();
       let data = null;
       try { data = JSON.parse(raw); } catch (_) {}

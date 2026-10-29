@@ -99,6 +99,8 @@ Everything has a default, so none of these are required.
 | `FIRM_NAME` | none | White-label name shown in the UI and used in the model's instructions |
 | `BRAND_COLOR` | default green | Accent colour as `#rrggbb`; anything else is ignored |
 | `EMBED_ORIGINS` | same site only | Space-separated `https://host` origins allowed to embed the chat in an iframe |
+| `ACCESS_TOKEN` | none (open) | A shared secret required in the `X-Access-Token` header for `/chat`. The chat page asks for it once and keeps it for that browser tab only. Not user accounts: everyone with the token has the same access |
+| `RATE_LIMIT_DB` | in memory | Path of a SQLite file. Set it and every worker process shares one 20-requests-a-minute-per-client limit instead of each keeping its own |
 | `STATS_TOKEN` | none | Required in the `X-Stats-Token` header for `/stats`; without it, `/stats` answers only direct local requests |
 | `MINUTES_SAVED_PER_QUESTION` | `3` | Assumption behind the "estimated minutes saved" figure on the stats page |
 
@@ -156,14 +158,15 @@ docs/           screenshots used in this README
 
 ## Known limitations
 
+When the agent answers from the offline cache, the code now appends a plain note with the cache date if the model's own sentence did not say so.
+
 - The model is an 8B local model and still makes mistakes, which is why answers are number-checked and the evals report pass rates.
 - The number check accepts any correct rounding of the data, so "$5T" passes for $4.95T while "39.3" for a P/E of 38.93 is flagged. Numbers the model works out in its head without the calculator are flagged even when right.
 - Filing sections that only point elsewhere, such as a management's discussion incorporated by reference or a legal proceedings item that says "see Note X", come back as a single short passage.
 - A company that moved to a new SEC registrant has no 10-K under its new number until it files one (Exxon Mobil in 2026, for example).
-- When the agent answers from the offline cache, the UI labels the source "(cached)", but the model's own sentence does not always say so.
 - Price data is delayed and comes from an unlicensed source (see above).
-- The rate limiter is in memory and single-process.
-- There are no user accounts or authentication. Run it on localhost or behind a proxy with access control.
+- The rate limiter counts per client IP address. Behind a reverse proxy every visitor shares the proxy's address unless the proxy enforces its own limit.
+- There are no user accounts. `ACCESS_TOKEN` gives one shared secret for the chat; without it, run on localhost or behind a proxy with access control.
 
 ## Competition: Dubai AI Agents Championship
 

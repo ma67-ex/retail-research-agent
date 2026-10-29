@@ -826,6 +826,65 @@ def test_server_rate_limit_429():
     assert _post(base, {"task": "TICKER:AAA"}).status_code == 200
 
 
+def test_cache_note_added_when_the_answer_does_not_say_so():
+    stale = [{"tool": "get_quote", "result": {"stale": True, "as_of": "2026-10-20", "price": 1.0}}]
+    fresh = [{"tool": "get_quote", "result": {"price": 1.0, "as_of": TODAY}}]
+    noted = agent._cache_note("AAA is $111.11.", stale)
+    assert noted.startswith("AAA is $111.11.") and "saved data (as of 2026-10-20)" in noted and "out of date" in noted, noted
+    assert agent._cache_note("AAA is $111.11.", fresh) == "AAA is $111.11."  # live data: nothing added
+    said = "AAA is $111.11 (cached, may be out of date)."
+    assert agent._cache_note(said, stale) == said  # the model already said it: no duplicate
+    assert agent._cache_note("", stale) == "" and agent._cache_note("x", [{"tool": "t", "result": "not a dict"}]) == "x"
+
+
+def test_run_appends_the_cache_note():
+    def loop(task, past, max_turns, calls, advice):
+        calls.append({"tool": "get_quote", "args": {}, "result": {"stale": True, "as_of": "2026-10-20"}})
+        return "AAA is $111.11.", [], []
+    with mock.patch.object(agent, "_loop", loop):
+        out = agent.run("What is AAA?")
+    assert out["answer"].endswith("so it may be out of date.") and out["unverified_numbers"] == [], out
+
+
+def test_shared_rate_limiter_counts_across_workers():
+    import server
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "rate.db")
+        a, b = server._SharedLimiter(path), server._SharedLimiter(path)  # two "workers" on one file
+        results = [a.allow("1.2.3.4", 3, 60, 100.0), b.allow("1.2.3.4", 3, 60, 101.0), a.allow("1.2.3.4", 3, 60, 102.0)]
+        assert results == [True, True, True], results
+        assert b.allow("1.2.3.4", 3, 60, 103.0) is False  # the fourth, from the other worker
+        assert a.allow("5.6.7.8", 3, 60, 103.0) is True  # a different client is unaffected
+        assert a.allow("1.2.3.4", 3, 60, 161.5) is True  # the window has slid past the first hit
+
+
+def test_shared_rate_limiter_is_used_by_the_endpoint():
+    base = _server()
+    srv = _srv["server"]
+    with tempfile.TemporaryDirectory() as d, mock.patch.object(srv, "_shared", srv._SharedLimiter(os.path.join(d, "r.db"))):
+        for _ in range(srv.RATE_LIMIT):
+            assert _post(base, {"task": ""}).status_code == 422
+        r = _post(base, {"task": "TICKER:AAA"})
+        _is_json_error(r, 429)
+        assert r.headers["retry-after"] == "60"
+    assert _post(base, {"task": "TICKER:AAA"}).status_code == 200  # back to the in-memory limiter, counters cleared
+
+
+def test_access_token_is_optional_and_checked_when_set():
+    base = _server()
+    srv = _srv["server"]
+    assert srv.ACCESS_TOKEN == "" and requests.get(base + "/config", timeout=10).json()["requires_token"] is False
+    with mock.patch.object(srv, "ACCESS_TOKEN", "s3cret"):
+        assert requests.get(base + "/config", timeout=10).json()["requires_token"] is True
+        _is_json_error(_post(base, {"task": "TICKER:AAA"}), 401)
+        r = requests.post(base + "/chat", json={"task": "TICKER:AAA"}, headers={"x-access-token": "wrong"}, timeout=30)
+        _is_json_error(r, 401)
+        r = requests.post(base + "/chat", json={"task": "TICKER:AAA"}, headers={"x-access-token": "s3cret"}, timeout=30)
+        assert r.status_code == 200, r.text[:200]
+        assert "s3cret" not in requests.get(base + "/config", timeout=10).text  # the token is never echoed
+    assert _post(base, {"task": "TICKER:AAA"}).status_code == 200  # unset again: open as before
+
+
 def main():
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_") and callable(f)]
     failed = 0
