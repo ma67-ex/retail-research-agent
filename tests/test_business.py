@@ -173,7 +173,8 @@ def test_config_defaults():
     r = S.get(base + "/config", timeout=10)
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
     body = r.json()
-    assert set(body) == {"product_name", "firm_name", "brand_color", "model"}
+    assert set(body) == {"product_name", "firm_name", "brand_color", "model", "requires_token"}
+    assert body["requires_token"] is False  # no ACCESS_TOKEN set: the chat stays open
     assert body["product_name"] == "Retail Research Agent" and body["firm_name"] is None
     assert body["brand_color"] is None and isinstance(body["model"], str) and body["model"]
 

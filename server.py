@@ -4,6 +4,7 @@ import hmac
 import math
 import os
 import re
+import sqlite3
 import threading
 import time
 from collections import defaultdict, deque
@@ -56,9 +57,46 @@ _PROXY_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip")
 
 RATE_LIMIT = 20
 RATE_WINDOW = 60.0
-# ponytail: in-memory and single-process; use a shared store or the reverse proxy if scaled out
+# Default: in memory, per process. Set RATE_LIMIT_DB to a file path and every worker process shares one limit.
 _hits: dict = defaultdict(deque)
 _hits_lock = threading.Lock()
+RATE_LIMIT_DB = os.environ.get("RATE_LIMIT_DB", "").strip()
+# Optional shared secret for /chat. Unset: open, as before (run on localhost or behind a proxy with access control).
+ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "").strip()
+
+
+class _SharedLimiter:
+    """Sliding-window limit kept in a SQLite file, so several uvicorn workers count the same requests."""
+
+    def __init__(self, path: str):
+        self.path, self._local = path, threading.local()
+
+    def _conn(self):
+        c = getattr(self._local, "c", None)
+        if c is None:
+            c = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("CREATE TABLE IF NOT EXISTS hits (ip TEXT NOT NULL, t REAL NOT NULL)")
+            c.execute("CREATE INDEX IF NOT EXISTS hits_ip_t ON hits (ip, t)")
+            self._local.c = c
+        return c
+
+    def allow(self, ip: str, limit: int, window: float, now: float) -> bool:
+        c = self._conn()
+        c.execute("BEGIN IMMEDIATE")  # take the write lock first so two workers cannot both see room for one more
+        try:
+            c.execute("DELETE FROM hits WHERE t < ?", (now - window,))
+            (n,) = c.execute("SELECT COUNT(*) FROM hits WHERE ip = ?", (ip,)).fetchone()
+            if n < limit:
+                c.execute("INSERT INTO hits (ip, t) VALUES (?, ?)", (ip, now))
+            c.execute("COMMIT")
+            return n < limit
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+
+
+_shared = _SharedLimiter(RATE_LIMIT_DB) if RATE_LIMIT_DB else None
 
 # ponytail: in-memory, resets on restart, single-process
 _stats_lock = threading.Lock()
@@ -166,8 +204,19 @@ def stats_access(request: Request):
         raise HTTPException(403, "Stats are limited to direct local access. Set STATS_TOKEN to read them remotely.")
 
 
+def chat_access(request: Request):
+    if ACCESS_TOKEN and not hmac.compare_digest(request.headers.get("x-access-token", "").encode(), ACCESS_TOKEN.encode()):
+        raise HTTPException(401, "An access token is needed to use this assistant.")
+
+
 def rate_limit(request: Request):
     ip = request.client.host if request.client else "unknown"
+    if _shared:
+        if not _shared.allow(ip, RATE_LIMIT, RATE_WINDOW, time.time()):  # wall clock: processes do not share a monotonic one
+            _bump("rate_limited")
+            raise HTTPException(429, "Too many requests. Wait a minute and try again.",
+                                headers={"Retry-After": str(int(RATE_WINDOW))})
+        return
     now = time.monotonic()
     with _hits_lock:
         hits = _hits[ip]
@@ -207,7 +256,7 @@ def index():
 @app.get("/config")
 def config():
     return JSONResponse({"product_name": PRODUCT_NAME, "firm_name": FIRM_NAME or None,
-                         "brand_color": BRAND_COLOR, "model": MODEL},
+                         "brand_color": BRAND_COLOR, "model": MODEL, "requires_token": bool(ACCESS_TOKEN)},
                         headers={"Cache-Control": "no-store"})
 
 
@@ -233,7 +282,7 @@ def asset(name: str):
     return FileResponse(STATIC_DIR / name, media_type=_ASSETS[name], headers=_REVALIDATE)
 
 
-@app.post("/chat", dependencies=[Depends(rate_limit)])
+@app.post("/chat", dependencies=[Depends(rate_limit), Depends(chat_access)])  # limit first, so token guessing is throttled too
 def chat(req: ChatRequest):
     try:
         result = run(req.task, [m.model_dump() for m in req.history or []])
